@@ -155,9 +155,10 @@ extension CKRecordRecoverable where Self: Object {
                 o.setValue(recordValue, forKey: prop.name)
             }
         }
+        updateShareMetadataIfNeeded(for: o, from: record)
         return o
     }
-    
+
     /// The primaryKey in Realm could be type of Int or String. However the `recordName` is a String type, we need to make a check.
     /// The reversed process happens in `recordID` property in `CKRecordConvertible` protocol.
     ///
@@ -173,6 +174,25 @@ extension CKRecordRecoverable where Self: Object {
             return Int(recordID.recordName)
         default:
             fatalError("The type of object primaryKey should be String or Int")
+        }
+    }
+
+    static func updateShareMetadataIfNeeded(for object: Object, from record: CKRecord) {
+        let properties = object.objectSchema.properties.reduce(into: Set<String>()) { partialResult, property in
+            partialResult.insert(property.name)
+        }
+        guard properties.contains("shareZoneName"),
+              properties.contains("shareOwnerName") else { return }
+        object.setValue(record.recordID.zoneID.zoneName, forKey: "shareZoneName")
+        object.setValue(record.recordID.zoneID.ownerName, forKey: "shareOwnerName")
+        if properties.contains("shareScopeRawValue") {
+            let scope: CKDatabase.Scope
+            if record.recordID.zoneID.ownerName == CKCurrentUserDefaultName {
+                scope = .private
+            } else {
+                scope = .shared
+            }
+            object.setValue(scope.rawValue, forKey: "shareScopeRawValue")
         }
     }
 }

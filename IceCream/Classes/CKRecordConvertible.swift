@@ -7,7 +7,6 @@
 
 import Foundation
 import CloudKit
-import Realm
 import RealmSwift
 
 public protocol CKRecordConvertible {
@@ -19,6 +18,24 @@ public protocol CKRecordConvertible {
     var record: CKRecord { get }
 
     var isDeleted: Bool { get }
+}
+
+public protocol CKRecordZoneProvidable {
+    /// Custom zone name the record should live in. `nil` falls back to the default zone.
+    var icecreamZoneName: String? { get }
+    
+    /// Owner name for the custom zone. Required when `icecreamZoneName` is provided.
+    var icecreamZoneOwnerName: String? { get }
+    
+    /// Optional override for the database scope. When `nil`, the default scope defined
+    /// on the conforming type is used.
+    var icecreamDatabaseScope: CKDatabase.Scope? { get }
+}
+
+extension CKRecordZoneProvidable {
+    public var icecreamZoneName: String? { nil }
+    public var icecreamZoneOwnerName: String? { nil }
+    public var icecreamDatabaseScope: CKDatabase.Scope? { nil }
 }
 
 extension CKRecordConvertible where Self: Object {
@@ -37,8 +54,10 @@ extension CKRecordConvertible where Self: Object {
             return CKRecordZone.ID(zoneName: "\(recordType)sZone", ownerName: CKCurrentUserDefaultName)
         case .public:
             return CKRecordZone.default().zoneID
-        default:
-            fatalError("Shared Database is not supported now")
+        case .shared:
+            return CKRecordZone.ID(zoneName: "\(recordType)sZone", ownerName: CKCurrentUserDefaultName)
+        @unknown default:
+            return CKRecordZone.ID(zoneName: "\(recordType)sZone", ownerName: CKCurrentUserDefaultName)
         }
     }
     
@@ -60,13 +79,13 @@ extension CKRecordConvertible where Self: Object {
                 assert(primaryValueString.allSatisfy({ $0.isASCII }), "Primary value for CKRecord name must contain only ASCII characters")
                 assert(primaryValueString.count <= 255, "Primary value for CKRecord name must not exceed 255 characters")
                 assert(!primaryValueString.starts(with: "_"), "Primary value for CKRecord name must not start with an underscore")
-                return CKRecord.ID(recordName: primaryValueString, zoneID: Self.zoneID)
+                return CKRecord.ID(recordName: primaryValueString, zoneID: resolvedZoneID())
             } else {
                 assertionFailure("\(primaryKeyProperty.name)'s value should be String type")
             }
         case .int:
             if let primaryValueInt = self[primaryKeyProperty.name] as? Int {
-                return CKRecord.ID(recordName: "\(primaryValueInt)", zoneID: Self.zoneID)
+                return CKRecord.ID(recordName: "\(primaryValueInt)", zoneID: resolvedZoneID())
             } else {
                 assertionFailure("\(primaryKeyProperty.name)'s value should be Int type")
             }
@@ -117,33 +136,17 @@ extension CKRecordConvertible where Self: Object {
                 case .object:
                     /// We may get List<Cat> here
                     /// The item cannot be casted as List<Object>
-                    /// It can be casted at a low-level type `RLMSwiftCollectionBase`
-                    guard let list = item as? RLMSwiftCollectionBase else { break }
-                    if (list._rlmCollection.count > 0) {
-                        var referenceArray = [CKRecord.Reference]()
-                        let wrappedArray = list._rlmCollection
-                        for index in 0..<wrappedArray.count {
-                            guard let object = wrappedArray[index] as? Object, let primaryKey = object.objectSchema.primaryKeyProperty?.name else { continue }
-                            switch object.objectSchema.primaryKeyProperty?.type {
-                            case .string:
-                                if let primaryValueString = object[primaryKey] as? String, let obj = object as? CKRecordConvertible, !obj.isDeleted {
-                                    let referenceZoneID = CKRecordZone.ID(zoneName: "\(object.objectSchema.className)sZone", ownerName: CKCurrentUserDefaultName)
-                                    referenceArray.append(CKRecord.Reference(recordID: CKRecord.ID(recordName: primaryValueString, zoneID: referenceZoneID), action: .none))
-                                }
-                            case .int:
-                                if let primaryValueInt = object[primaryKey] as? Int, let obj = object as? CKRecordConvertible, !obj.isDeleted {
-                                    let referenceZoneID = CKRecordZone.ID(zoneName: "\(object.objectSchema.className)sZone", ownerName: CKCurrentUserDefaultName)
-                                    referenceArray.append(CKRecord.Reference(recordID: CKRecord.ID(recordName: "\(primaryValueInt)", zoneID: referenceZoneID), action: .none))
-                                }
-                            default:
-                                break
-                            }
+                    /// It can be casted at a low-level type `ListBase`
+                    guard let list = item as? ListBase, list.count > 0 else { break }
+                    var referenceArray = [CKRecord.Reference]()
+                    let wrappedArray = list._rlmArray
+                    for index in 0..<wrappedArray.count {
+                        guard let object = wrappedArray[index] as? Object else { continue }
+                        if let obj = object as? CKRecordConvertible, !obj.isDeleted {
+                            referenceArray.append(CKRecord.Reference(recordID: obj.recordID, action: .none))
                         }
-                        r[prop.name] = referenceArray as CKRecordValue
                     }
-                    else {
-                        r[prop.name] = nil
-                    }
+                    r[prop.name] = referenceArray as CKRecordValue
                 default:
                     break
                     /// Other inner types of List is not supported yet
@@ -178,4 +181,20 @@ extension CKRecordConvertible where Self: Object {
         return r
     }
     
+    public func resolvedZoneID() -> CKRecordZone.ID {
+        guard let provider = self as? CKRecordZoneProvidable,
+              let zoneName = provider.icecreamZoneName,
+              let ownerName = provider.icecreamZoneOwnerName else {
+            return Self.zoneID
+        }
+        return CKRecordZone.ID(zoneName: zoneName, ownerName: ownerName)
+    }
+    
+    public func resolvedDatabaseScope() -> CKDatabase.Scope {
+        if let provider = self as? CKRecordZoneProvidable,
+           let scope = provider.icecreamDatabaseScope {
+            return scope
+        }
+        return Self.databaseScope
+    }
 }

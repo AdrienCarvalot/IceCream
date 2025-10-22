@@ -20,6 +20,7 @@ public final class SyncObject<T, U, V, W> where T: Object & CKRecordConvertible 
     /// Notifications are delivered as long as a reference is held to the returned notification token. We should keep a strong reference to this token on the class registering for updates, as notifications are automatically unregistered when the notification token is deallocated.
     /// For more, reference is here: https://realm.io/docs/swift/latest/#notifications
     private var notificationToken: NotificationToken?
+    private let zoneIDResolver: () -> [CKRecordZone.ID]
     
     public var pipeToEngine: ((_ recordsToStore: [CKRecord], _ recordIDsToDelete: [CKRecord.ID]) -> ())?
     
@@ -34,9 +35,14 @@ public final class SyncObject<T, U, V, W> where T: Object & CKRecordConvertible 
         type: T.Type,
         uListElementType: U.Type? = nil,
         vListElementType: V.Type? = nil,
-        wListElementType: W.Type? = nil
+        wListElementType: W.Type? = nil,
+        zoneIDResolver: (() -> [CKRecordZone.ID])? = nil
     ) {
         self.realmConfiguration = realmConfiguration
+        self.zoneIDResolver = zoneIDResolver ?? { [recordType = T.recordType, ownerName = CKCurrentUserDefaultName] in
+            let zoneID = CKRecordZone.ID(zoneName: "\(recordType)sZone", ownerName: ownerName)
+            return [zoneID]
+        }
     }
     
 }
@@ -49,35 +55,33 @@ extension SyncObject: Syncable {
         return T.recordType
     }
     
-    public var zoneID: CKRecordZone.ID {
-        return T.zoneID
+    public var zoneIDs: [CKRecordZone.ID] {
+        let ids = zoneIDResolver().filter { !$0.zoneName.isEmpty }
+        return Array(Set(ids))
     }
     
-    public var zoneChangesToken: CKServerChangeToken? {
-        get {
-            /// For the very first time when launching, the token will be nil and the server will be giving everything on the Cloud to client
-            /// In other situation just get the unarchive the data object
-            guard let tokenData = UserDefaults.standard.object(forKey: T.className() + IceCreamKey.zoneChangesTokenKey.value) as? Data else { return nil }
-            return NSKeyedUnarchiver.unarchiveObject(with: tokenData) as? CKServerChangeToken
+    public func zoneChangesToken(for zoneID: CKRecordZone.ID) -> CKServerChangeToken? {
+        guard let tokenData = UserDefaults.standard.object(forKey: changeTokenKey(for: zoneID)) as? Data else { return nil }
+        return NSKeyedUnarchiver.unarchiveObject(with: tokenData) as? CKServerChangeToken
+    }
+    
+    public func setZoneChangesToken(_ token: CKServerChangeToken?, for zoneID: CKRecordZone.ID) {
+        let key = changeTokenKey(for: zoneID)
+        guard let token else {
+            UserDefaults.standard.removeObject(forKey: key)
+            return
         }
-        set {
-            guard let n = newValue else {
-                UserDefaults.standard.removeObject(forKey: T.className() + IceCreamKey.zoneChangesTokenKey.value)
-                return
-            }
-            let data = NSKeyedArchiver.archivedData(withRootObject: n)
-            UserDefaults.standard.set(data, forKey: T.className() + IceCreamKey.zoneChangesTokenKey.value)
-        }
+        let data = NSKeyedArchiver.archivedData(withRootObject: token)
+        UserDefaults.standard.set(data, forKey: key)
     }
 
-    public var isCustomZoneCreated: Bool {
-        get {
-            guard let flag = UserDefaults.standard.object(forKey: T.className() + IceCreamKey.hasCustomZoneCreatedKey.value) as? Bool else { return false }
-            return flag
-        }
-        set {
-            UserDefaults.standard.set(newValue, forKey: T.className() + IceCreamKey.hasCustomZoneCreatedKey.value)
-        }
+    public func isCustomZoneCreated(for zoneID: CKRecordZone.ID) -> Bool {
+        guard let flag = UserDefaults.standard.object(forKey: customZoneCreatedKey(for: zoneID)) as? Bool else { return false }
+        return flag
+    }
+    
+    public func setCustomZoneCreated(_ newValue: Bool, for zoneID: CKRecordZone.ID) {
+        UserDefaults.standard.set(newValue, forKey: customZoneCreatedKey(for: zoneID))
     }
     
     public func add(record: CKRecord) {
@@ -181,5 +185,12 @@ extension SyncObject: Syncable {
         pipeToEngine?(recordsToStore, [])
     }
     
+    private func changeTokenKey(for zoneID: CKRecordZone.ID) -> String {
+        return "\(T.className()).\(zoneID.ownerName).\(zoneID.zoneName).\(IceCreamKey.zoneChangesTokenKey.value)"
+    }
+    
+    private func customZoneCreatedKey(for zoneID: CKRecordZone.ID) -> String {
+        return "\(T.className()).\(zoneID.ownerName).\(zoneID.zoneName).\(IceCreamKey.hasCustomZoneCreatedKey.value)"
+    }
+    
 }
-

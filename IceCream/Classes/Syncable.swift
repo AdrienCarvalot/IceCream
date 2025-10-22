@@ -15,11 +15,17 @@ public protocol Syncable: AnyObject {
     
     /// CKRecordZone related
     var recordType: String { get }
-    var zoneID: CKRecordZone.ID { get }
+    
+    /// All zones the sync object should observe.
+    /// Implementations may return an empty array if no zones are yet known.
+    var zoneIDs: [CKRecordZone.ID] { get }
     
     /// Local storage
-    var zoneChangesToken: CKServerChangeToken? { get set }
-    var isCustomZoneCreated: Bool { get set }
+    func zoneChangesToken(for zoneID: CKRecordZone.ID) -> CKServerChangeToken?
+    func setZoneChangesToken(_ token: CKServerChangeToken?, for zoneID: CKRecordZone.ID)
+    
+    func isCustomZoneCreated(for zoneID: CKRecordZone.ID) -> Bool
+    func setCustomZoneCreated(_ newValue: Bool, for zoneID: CKRecordZone.ID)
     
     /// Realm Database related
     func registerLocalDatabase()

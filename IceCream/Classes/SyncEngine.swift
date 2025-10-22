@@ -25,8 +25,11 @@ public final class SyncEngine {
         case .public:
             let publicDatabaseManager = PublicDatabaseManager(objects: objects, container: container)
             self.init(databaseManager: publicDatabaseManager)
-        default:
-            fatalError("Shared database scope is not supported yet")
+        case .shared:
+            let sharedDatabaseManager = SharedDatabaseManager(objects: objects, container: container)
+            self.init(databaseManager: sharedDatabaseManager)
+        @unknown default:
+            fatalError("Unsupported database scope: \(databaseScope)")
         }
     }
     
@@ -55,9 +58,7 @@ public final class SyncEngine {
                 self.databaseManager.startObservingRemoteChanges()
                 self.databaseManager.startObservingTermination()
                 self.databaseManager.createDatabaseSubscriptionIfHaveNot()
-            case .temporarilyUnavailable:
-                break
-            case .couldNotDetermine:
+            case .couldNotDetermine, .temporarilyUnavailable:
                 break
             @unknown default:
                 break
