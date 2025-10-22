@@ -134,18 +134,15 @@ extension CKRecordConvertible where Self: Object {
                     let array = Array(list)
                     r[prop.name] = array as CKRecordValue
                 case .object:
-                    /// We may get List<Cat> here
-                    /// The item cannot be casted as List<Object>
-                    /// It can be casted at a low-level type `ListBase`
-                    guard let list = item as? ListBase, list.count > 0 else { break }
+                    guard let collection = item as? any Collection else { break }
                     var referenceArray = [CKRecord.Reference]()
-                    let wrappedArray = list._rlmArray
-                    for index in 0..<wrappedArray.count {
-                        guard let object = wrappedArray[index] as? Object else { continue }
-                        if let obj = object as? CKRecordConvertible, !obj.isDeleted {
-                            referenceArray.append(CKRecord.Reference(recordID: obj.recordID, action: .none))
-                        }
+                    for element in collection {
+                        guard let object = element as? Object,
+                              let convertible = object as? CKRecordConvertible,
+                              !convertible.isDeleted else { continue }
+                        referenceArray.append(CKRecord.Reference(recordID: convertible.recordID, action: .none))
                     }
+                    guard !referenceArray.isEmpty else { break }
                     r[prop.name] = referenceArray as CKRecordValue
                 default:
                     break
